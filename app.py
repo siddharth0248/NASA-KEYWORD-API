@@ -1,28 +1,38 @@
 from fastapi import FastAPI
-from typing import List
+from fastapi.middleware.cors import CORSMiddleware
 import json
 
 app = FastAPI(
-    title="NASA SMD Keyword Service",
-    description="API for NASA SMD taxonomy keywords",
-    version="1.0"
+    title="NASA SMD Taxonomy API",
+    description="NASA Science Mission Directorate Topic and Keyword Service",
+    version="2.0"
 )
 
-# Load JSON
-with open("nasa_smd_classified_keywords.json", "r") as f:
+# Enable browser access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Load taxonomy
+with open("nasa_smd_full_topic_keywords.json", "r") as f:
     taxonomy = json.load(f)
 
 
-# Home endpoint
 @app.get("/")
 def home():
     return {
-        "message": "NASA SMD Keyword API running",
+        "message": "NASA SMD Taxonomy API Running",
+        "total_smds": len(taxonomy),
         "smds": list(taxonomy.keys())
     }
 
-
+# ----------------------------------------
 # Get all SMDs
+# ----------------------------------------
 @app.get("/smds")
 def get_smds():
     return {
@@ -30,55 +40,94 @@ def get_smds():
     }
 
 
-# Get keywords by SMD
-@app.get("/keywords/{smd}")
-def get_keywords(smd: str):
+# ----------------------------------------
+# Get topics for an SMD
+# ----------------------------------------
+@app.get("/topics/{smd}")
+def get_topics(smd: str):
 
     if smd not in taxonomy:
         return {"error": "SMD not found"}
 
+    topics = list(taxonomy[smd]["topics"].keys())
+
     return {
         "smd": smd,
-        "total_keywords": len(taxonomy[smd]),
-        "keywords": taxonomy[smd]
+        "topics": topics,
+        "count": len(topics)
+    }
+# ----------------------------------------
+# Get keywords for topic
+# ----------------------------------------
+@app.get("/keywords/{smd}/{topic}")
+def get_keywords(smd: str, topic: str):
+
+    if smd not in taxonomy:
+        return {"error": "SMD not found"}
+
+    topics = taxonomy[smd]["topics"]
+
+    if topic not in topics:
+        return {"error": "Topic not found"}
+
+    keywords = topics[topic]
+
+    return {
+        "smd": smd,
+        "topic": topic,
+        "total_keywords": len(keywords),
+        "keywords": keywords
     }
 
-
-# Search keywords
+# ----------------------------------------
+# Global keyword search
+# ----------------------------------------
 @app.get("/search")
 def search_keywords(q: str):
 
     results = []
 
-    for smd, keywords in taxonomy.items():
+    for smd, smd_data in taxonomy.items():
 
-        for keyword in keywords:
+        for topic, keywords in smd_data["topics"].items():
 
-            if q.lower() in keyword.lower():
+            for keyword in keywords:
 
-                results.append({
-                    "keyword": keyword,
-                    "smd": smd
-                })
+                if q.lower() in keyword.lower():
+
+                    results.append({
+                        "keyword": keyword,
+                        "topic": topic,
+                        "smd": smd
+                    })
 
     return {
         "query": q,
         "count": len(results),
-        "results": results[:50]
+        "results": results[:100]
     }
+
+
+# ----------------------------------------
+# Autocomplete
+# ----------------------------------------
 @app.get("/autocomplete")
 def autocomplete(q: str):
 
     suggestions = []
 
-    for smd, keywords in taxonomy.items():
+    for smd, smd_data in taxonomy.items():
 
-        for keyword in keywords:
+        for topic, keywords in smd_data["topics"].items():
 
-            if keyword.lower().startswith(q.lower()):
+            for keyword in keywords:
 
-                suggestions.append(keyword)
+                if keyword.lower().startswith(q.lower()):
+                    suggestions.append(keyword)
+
+    unique_suggestions = list(set(suggestions))
 
     return {
-        "suggestions": suggestions[:20]
+        "query": q,
+        "suggestions": sorted(unique_suggestions)[:20]
     }
