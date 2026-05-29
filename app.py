@@ -1,14 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import json
+from pathlib import Path
 
 app = FastAPI(
     title="NASA SMD Taxonomy API",
-    description="NASA Science Mission Directorate Topic and Keyword Service",
-    version="2.0"
+    description="NASA Science Mission Directorate Keyword Service",
+    version="3.0"
 )
 
-# Enable browser access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,9 +17,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load taxonomy
-with open("nasa_smd_full_topic_keywords.json", "r") as f:
-    taxonomy = json.load(f)
+TAXONOMY_FILE = Path("nasa_smd_keyword.json")
+
+with TAXONOMY_FILE.open("r", encoding="utf-8") as f:
+    taxonomy: dict[str, list[str]] = json.load(f)
 
 
 @app.get("/")
@@ -27,79 +28,44 @@ def home():
     return {
         "message": "NASA SMD Taxonomy API Running",
         "total_smds": len(taxonomy),
-        "smds": list(taxonomy.keys())
+        "smds": list(taxonomy.keys()),
+        "total_keywords": sum(len(keywords) for keywords in taxonomy.values())
     }
 
-# ----------------------------------------
-# Get all SMDs
-# ----------------------------------------
+
 @app.get("/smds")
 def get_smds():
     return {
+        "count": len(taxonomy),
         "smds": list(taxonomy.keys())
     }
 
 
-# ----------------------------------------
-# Get topics for an SMD
-# ----------------------------------------
-@app.get("/topics/{smd}")
-def get_topics(smd: str):
-
+@app.get("/keywords/{smd}")
+def get_keywords_by_smd(smd: str):
     if smd not in taxonomy:
-        return {"error": "SMD not found"}
+        raise HTTPException(status_code=404, detail="SMD not found")
 
-    topics = list(taxonomy[smd]["topics"].keys())
+    keywords = taxonomy[smd]
 
     return {
         "smd": smd,
-        "topics": topics,
-        "count": len(topics)
-    }
-# ----------------------------------------
-# Get keywords for topic
-# ----------------------------------------
-@app.get("/keywords/{smd}/{topic}")
-def get_keywords(smd: str, topic: str):
-
-    if smd not in taxonomy:
-        return {"error": "SMD not found"}
-
-    topics = taxonomy[smd]["topics"]
-
-    if topic not in topics:
-        return {"error": "Topic not found"}
-
-    keywords = topics[topic]
-
-    return {
-        "smd": smd,
-        "topic": topic,
         "total_keywords": len(keywords),
         "keywords": keywords
     }
 
-# ----------------------------------------
-# Global keyword search
-# ----------------------------------------
-@app.get("/search")
-def search_keywords(q: str):
 
+@app.get("/search")
+def search_keywords(q: str = Query(..., min_length=1)):
     results = []
 
-    for smd, smd_data in taxonomy.items():
-
-        for topic, keywords in smd_data["topics"].items():
-
-            for keyword in keywords:
-
-                if q.lower() in keyword.lower():
-
-                    results.append({
-                        "keyword": keyword,
-                        "topic": topic,
-                        "smd": smd
-                    })
+    for smd, keywords in taxonomy.items():
+        for keyword in keywords:
+            if q.lower() in keyword.lower():
+                results.append({
+                    "keyword": keyword,
+                    "smd": smd
+                })
 
     return {
         "query": q,
@@ -108,26 +74,35 @@ def search_keywords(q: str):
     }
 
 
-# ----------------------------------------
-# Autocomplete
-# ----------------------------------------
 @app.get("/autocomplete")
-def autocomplete(q: str):
+def autocomplete(q: str = Query(..., min_length=1)):
+    suggestions = set()
 
-    suggestions = []
-
-    for smd, smd_data in taxonomy.items():
-
-        for topic, keywords in smd_data["topics"].items():
-
-            for keyword in keywords:
-
-                if keyword.lower().startswith(q.lower()):
-                    suggestions.append(keyword)
-
-    unique_suggestions = list(set(suggestions))
+    for keywords in taxonomy.values():
+        for keyword in keywords:
+            if keyword.lower().startswith(q.lower()):
+                suggestions.add(keyword)
 
     return {
         "query": q,
-        "suggestions": sorted(unique_suggestions)[:20]
+        "suggestions": sorted(suggestions)[:20]
+    }
+
+
+@app.get("/keyword/{keyword}")
+def get_keyword_smds(keyword: str):
+    matches = []
+
+    for smd, keywords in taxonomy.items():
+        for kw in keywords:
+            if kw.lower() == keyword.lower():
+                matches.append(smd)
+
+    if not matches:
+        raise HTTPException(status_code=404, detail="Keyword not found")
+
+    return {
+        "keyword": keyword,
+        "smds": matches,
+        "count": len(matches)
     }
